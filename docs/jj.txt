@@ -1,0 +1,53 @@
+Short answer: partially aligned, but not yet faithful to Tencent Hyra’s application model.
+
+The current docs correctly capture:
+
+- Context Agent → Proposal Agent → sandbox → evaluator → Experience Bank
+- asynchronous producer-consumer execution
+- recursive improvement using historical experience
+- isolated execution and bounded resource controls
+
+The main mismatch is that the design is currently too focused on “Python candidate code passing tests.” Tencent’s Hyra is a broader research Harness.
+
+| Area | Current Mini-Hyra docs | Required rethink |
+|---|---|---|
+| Core roles | Context, Proposal, Evaluator treated as equal components | Hyra’s core is primarily Context Agent + multiple Proposal Agents; evaluator is task-specific |
+| Solution format | `candidate.py` | Use a complete `solution/` package with canonical `solve.sh` entrypoint |
+| Evaluation | Fixed syntax/test/efficiency thresholds | Task-defined objectives such as minimize runtime, maximize score, improve BPB, docking score, routing cost, etc. |
+| Memory | Mostly summaries, lessons, and tags | Store immutable solution manifests, code/artifacts, logs, evaluator feedback, and metrics |
+| Loop | Single inner rework loop | Add optional outer loop that evolves the evaluator itself |
+| Selection | Pass/fail completion | Return the historical best valid solution, not simply the latest passing attempt |
+| Parallelism | Queue workers | Add semaphores for model, sandbox, evaluator, and queue capacity |
+| Timeout | Universal 5-second limit | Make limits task-specific; 5 seconds is suitable only for micro-tasks |
+
+Tencent’s official Hyra results repository confirms that Hyra produces reusable solution artifacts across AI4AI, AI4Science, and AI4Fun, rather than only transient code-test results. It also records task-specific metrics such as validation BPB, wall-clock time, kernel score, scientific objectives, and routing cost. [Official Hyra results repository](https://github.com/Tencent-Hunyuan/Hyra-results)
+
+The public launch page linked by Tencent describes the Hyra project directly: [Hyra launch page](https://hy.tencent.com/research/hyra). The exact Harness implementation is not open in that repository, so `solve.sh`, semaphore behavior, and evaluator co-evolution should be treated as public architecture descriptions rather than verified source-code contracts.
+
+Recommended Mini-Hyra application:
+
+```text
+TaskContract
+├── task description
+├── solution/solve.sh entrypoint
+├── evaluator contract
+├── objective metric and direction
+├── validity constraints
+├── per-task resource budget
+├── artifact retention policy
+└── stopping rule
+```
+
+For Phase 1, I recommend targeting one measurable AI-for-AI task, such as optimizing a small Python algorithm, kernel, or training configuration. That will exercise the real Hyra pattern:
+
+```text
+generate solution
+→ execute solve.sh
+→ measure objective
+→ store solution + artifacts + score
+→ synthesize inspirations
+→ generate competing proposals
+→ retain best historical solution
+```
+
+The existing documents are therefore a good foundation, but I would revise them before implementation—especially the Experience Bank schema, evaluator decision engine, solution-package interface, and optional outer evaluator loop.
