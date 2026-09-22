@@ -1,4 +1,14 @@
 from pathlib import Path
+import asyncio
+import json
+
+import mini_hyra.orchestrator as orchestrator_module
+from mini_hyra.config import RuntimePaths
+from mini_hyra.context_agent import ContextAgent
+from mini_hyra.manifest import build_package
+from mini_hyra.orchestrator import Orchestrator
+from mini_hyra.main import main
+from mini_hyra.task_contract import TASK_TEMPLATE
 
 from mini_hyra.evaluator import evaluate
 from mini_hyra.experience_bank import ExperienceBank
@@ -36,3 +46,53 @@ def test_experience_bank_is_append_only(tmp_path: Path) -> None:
         [{"name": "score", "value": 1.0, "direction": "maximize"}], True, [], ["baseline"], ["valid"], bank.now())
     bank.append(record)
     assert bank.best_score("demo", record.evaluator_version, "maximize") == 1.0
+
+
+def test_orchestrator_consumes_the_iteration_budget(tmp_path: Path) -> None:
+    class Agent:
+        async def propose(self, **_: object):
+            return build_package({"solution/solve.sh": b"#!/bin/sh\nexit 0\n"})
+
+    calls = 0
+
+    def fake_sandbox(*_: object, **__: object) -> SandboxResult:
+        nonlocal calls
+        calls += 1
+        return sandbox()
+
+    paths = RuntimePaths.from_root(tmp_path)
+    bank = ExperienceBank(paths.state / "experience_bank.json")
+    runner = Orchestrator(paths=paths, context_agent=ContextAgent(bank), proposal_agent=Agent(),
+                          evaluator=lambda *_: ObjectiveResult(True, 2.0, "score", "maximize", {}), experience_bank=bank)
+    original = orchestrator_module.run_in_sandbox
+    orchestrator_module.run_in_sandbox = fake_sandbox
+    try:
+        result = asyncio.run(runner.run(task(), strict_isolation=False))
+    finally:
+        orchestrator_module.run_in_sandbox = original
+    assert calls == 2
+    assert result is not None and result.is_best_so_far
+
+
+def test_cli_validates_contract_and_package_without_execution(tmp_path: Path) -> None:
+    contract = tmp_path / "task.json"
+    contract.write_text(json.dumps(TASK_TEMPLATE), encoding="utf-8")
+    proposal = tmp_path / "proposal" / "solution"
+    proposal.mkdir(parents=True)
+    (proposal / "solve.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    assert main(["--root", str(tmp_path), "init"]) == 0
+    assert main(["validate-task", str(contract)]) == 0
+    assert main(["validate-package", str(tmp_path / "proposal")]) == 0
+
+
+def test_gpu_policy_is_accepted_and_legacy_contract_is_cpu_only(tmp_path: Path) -> None:
+    from mini_hyra.task_contract import load_task_contract
+
+    contract = tmp_path / "gpu-task.json"
+    gpu_template = {**TASK_TEMPLATE, "gpu": {"enabled": True, "device_index": 0, "min_memory_mb": 1024, "memory_limit_mb": 2048, "require_cuda": True}}
+    contract.write_text(json.dumps(gpu_template), encoding="utf-8")
+    task = load_task_contract(contract)
+    assert task.gpu.enabled and task.gpu.memory_limit_mb == 2048
+    legacy = {key: value for key, value in TASK_TEMPLATE.items() if key != "gpu"}
+    contract.write_text(json.dumps(legacy), encoding="utf-8")
+    assert not load_task_contract(contract).gpu.enabled

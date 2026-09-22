@@ -40,6 +40,11 @@ This integration does not give untrusted solution code direct access to Antigrav
 
 The Universal Framework's broad host tools are useful for an interactive assistant, but they are too permissive for a recursive research Harness. Mini-Hyra must scope them to a per-run staging root and keep all actual proposal execution in `04_sandbox_execution.md`.
 
+The adapter is optional: if `agy.exe` is absent or fails, it returns an explicit
+unavailable/error response and must not fabricate a proposal. Live Antigravity
+execution should be enabled only after the deterministic inner loop and strict
+launcher are verified with fixture-based integration tests.
+
 ## 3. Configuration contract
 
 ```python

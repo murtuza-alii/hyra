@@ -49,7 +49,7 @@ Large source files, generated models, plots, and full logs are stored under `sol
         "evaluator_version": {"anyOf":[{"const":"none"},{"$ref":"#/$defs/hash"}]},
         "solution_entrypoint": {"const":"solution/solve.sh"},
         "status": {"enum":["PASS","FAIL"]},
-        "error_category": {"enum":["NONE","SYNTAX_ERROR","TEST_FAILURE","RUNTIME_ERROR","TIMEOUT","RESOURCE_LIMIT","SECURITY_VIOLATION","INTERNAL_ERROR","UNKNOWN"]},
+        "error_category": {"enum":["NONE","SYNTAX_ERROR","TEST_FAILURE","RUNTIME_ERROR","TIMEOUT","RESOURCE_LIMIT","GPU_UNAVAILABLE","SECURITY_VIOLATION","INTERNAL_ERROR","UNKNOWN"]},
         "execution_time_ms": {"type":"integer", "minimum":0},
         "stdout_stderr_summary": {
           "type":"object", "additionalProperties":false,
@@ -104,7 +104,7 @@ Status = Literal["PASS", "FAIL"]
 Direction = Literal["minimize", "maximize"]
 ErrorCategory = Literal[
     "NONE", "SYNTAX_ERROR", "TEST_FAILURE", "RUNTIME_ERROR", "TIMEOUT",
-    "RESOURCE_LIMIT", "SECURITY_VIOLATION", "INTERNAL_ERROR", "UNKNOWN",
+    "RESOURCE_LIMIT", "GPU_UNAVAILABLE", "SECURITY_VIOLATION", "INTERNAL_ERROR", "UNKNOWN",
 ]
 
 class ObjectiveMetric(TypedDict):
@@ -139,6 +139,14 @@ class ExperienceRecord(TypedDict):
 ```
 
 The writer validates the full document before atomic replacement. Records are immutable after append. `PASS` means the run was valid according to the task evaluator; `is_best_so_far` separately indicates objective leadership.
+
+The Phase 1 writer also holds both an in-process mutex and a cross-process lock
+at `state/locks/experience_bank.lock` across load, validation, append, and
+atomic replacement. This protects concurrent local workers from lost updates.
+It validates hashes, IDs, metric directions, bounded excerpts, tags, artifact
+manifests, and timestamps before committing. Artifact-directory pruning remains
+an operational retention task: do not delete artifacts automatically until a
+retention implementation can prove that no retained record references them.
 
 ## 5. Inspiration synthesis rules
 

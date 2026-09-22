@@ -12,6 +12,7 @@ def _error_category(sandbox: SandboxResult) -> ErrorCategory:
         "SYNTAX_ERROR": ErrorCategory.SYNTAX_ERROR, "TEST_FAILURE": ErrorCategory.TEST_FAILURE,
         "RUNTIME_ERROR": ErrorCategory.RUNTIME_ERROR, "TIMEOUT": ErrorCategory.TIMEOUT,
         "RESOURCE_LIMIT": ErrorCategory.RESOURCE_LIMIT, "SECURITY_VIOLATION": ErrorCategory.SECURITY_VIOLATION,
+        "GPU_UNAVAILABLE": ErrorCategory.GPU_UNAVAILABLE,
         "INTERNAL_ERROR": ErrorCategory.INTERNAL_ERROR,
     }
     return lookup.get(sandbox.status_code, ErrorCategory.UNKNOWN)

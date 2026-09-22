@@ -57,7 +57,7 @@ class EvaluationResult(TypedDict):
     status: Literal["PASS", "FAIL"]
     error_category: Literal[
         "NONE", "SYNTAX_ERROR", "TEST_FAILURE", "RUNTIME_ERROR", "TIMEOUT",
-        "RESOURCE_LIMIT", "SECURITY_VIOLATION", "INTERNAL_ERROR", "UNKNOWN",
+        "RESOURCE_LIMIT", "GPU_UNAVAILABLE", "SECURITY_VIOLATION", "INTERNAL_ERROR", "UNKNOWN",
     ]
     valid: bool
     objective_score: float | None
@@ -137,6 +137,7 @@ else:
 | uncaught exception | `RUNTIME_ERROR` | identify exception and input path |
 | wall/CPU timeout | `TIMEOUT` | bound the operation or reduce search |
 | memory/output/process limit | `RESOURCE_LIMIT` | control growth or output |
+| requested GPU missing or below the VRAM floor | `GPU_UNAVAILABLE` | choose a compatible task profile or device |
 | forbidden import, path, network, or child process | `SECURITY_VIOLATION` | terminal failure unless policy is explicitly changed |
 
 ## 6. Optional evaluator co-evolution

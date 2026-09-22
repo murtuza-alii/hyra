@@ -28,6 +28,36 @@ The parent verifies that every resolved path stays below the sandbox root and re
 
 `cwd` isolation alone is not a complete security boundary. POSIX deployments should add process groups, `resource.setrlimit`, and an OS policy such as a private mount namespace or restricted account. Windows deployments should use a Job Object, process-group cleanup, ACL-restricted directories, and a low-privilege child account or AppContainer policy. Strict mode refuses to execute when required isolation is unavailable.
 
+### 1.1 Strict launcher contract
+
+Strict mode requires `MINI_HYRA_HARDENED_LAUNCHER` to name an existing executable.
+Mini-Hyra invokes it as:
+
+```text
+<launcher> -- <allow-listed shell> ./solution/solve.sh
+```
+
+The launcher—not a Boolean environment flag—is responsible for enforcing the
+filesystem, network, child-process, and low-privilege policy. An unset or
+nonexistent launcher causes a `SECURITY_VIOLATION` result before proposal code
+runs. This is deliberately fail-closed. Development-only callers may request
+`strict_isolation=False`; their result is marked `isolation_degraded=true` and
+is unsuitable for unattended execution.
+
+### 1.2 GPU tasks
+
+A task may opt into one NVIDIA GPU through its `GpuPolicy`. Before launch,
+Mini-Hyra probes `nvidia-smi` and rejects a GPU task with `GPU_UNAVAILABLE` when
+the selected device is absent or has less than the declared minimum VRAM. It
+records the selected GPU's name, total VRAM, current VRAM use, and current
+utilization in `SandboxResult` as admission/exit telemetry.
+
+Mini-Hyra passes `CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`, and a bounded
+`MINI_HYRA_GPU_POLICY` JSON value to the launcher. Those values communicate the
+task's intent; they are not isolation. A strict launcher must enforce device
+selection and the VRAM cap using the host's supported mechanism. CPU-only tasks
+receive an explicit no-GPU environment.
+
 ## 2. Process invocation and environment
 
 ```python

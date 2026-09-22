@@ -16,6 +16,7 @@ class ErrorCategory(str, Enum):
     RUNTIME_ERROR = "RUNTIME_ERROR"
     TIMEOUT = "TIMEOUT"
     RESOURCE_LIMIT = "RESOURCE_LIMIT"
+    GPU_UNAVAILABLE = "GPU_UNAVAILABLE"
     SECURITY_VIOLATION = "SECURITY_VIOLATION"
     INTERNAL_ERROR = "INTERNAL_ERROR"
     UNKNOWN = "UNKNOWN"
@@ -47,6 +48,16 @@ class Objective:
 
 
 @dataclass(frozen=True)
+class GpuPolicy:
+    """Task-declared GPU requirements; actual enforcement belongs to the launcher."""
+    enabled: bool = False
+    device_index: int = 0
+    min_memory_mb: int = 0
+    memory_limit_mb: int | None = None
+    require_cuda: bool = False
+
+
+@dataclass(frozen=True)
 class TaskContract:
     task_id: str
     task_family: str
@@ -59,6 +70,7 @@ class TaskContract:
     wall_timeout_seconds: float
     memory_limit_mb: int
     allow_network: bool = False
+    gpu: GpuPolicy = field(default_factory=GpuPolicy)
 
 
 @dataclass(frozen=True)
@@ -91,6 +103,10 @@ class SandboxResult:
     output_truncated: bool
     isolation_degraded: bool
     sandbox_path: str | None
+    gpu_name: str | None = None
+    gpu_memory_total_mb: int | None = None
+    gpu_memory_used_mb: int | None = None
+    gpu_utilization_percent: int | None = None
 
 
 @dataclass(frozen=True)

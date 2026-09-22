@@ -81,6 +81,13 @@ class Objective(TypedDict):
     target: float | None
     minimum_improvement: float
 
+class GpuPolicy(TypedDict):
+    enabled: bool
+    device_index: int
+    min_memory_mb: int
+    memory_limit_mb: int | None
+    require_cuda: bool
+
 class TaskContract(TypedDict):
     task_id: str
     task_family: str
@@ -93,7 +100,13 @@ class TaskContract(TypedDict):
     wall_timeout_seconds: float
     memory_limit_mb: int
     allow_network: bool
+    gpu: GpuPolicy
 ```
+
+`GpuPolicy` is optional for backward-compatible CPU tasks. When enabled, it
+declares one device index, a minimum VRAM floor, an optional VRAM cap, and
+whether CUDA is required. The hardened launcher, not environment variables,
+enforces device access and VRAM limits.
 
 The Harness returns the historical best valid solution and its reproducible artifacts, not merely the latest passing iteration. A simple Python task may use a compatibility adapter around `candidate.py`, but the primary contract is a package with `solution/solve.sh`.
 
@@ -127,6 +140,20 @@ LOGGED_TO_EB -> REWORK_REQUIRED -> PENDING
 ```
 
 `PASS` and `FAIL` are EB record statuses. They are not orchestration states. A valid but non-improving experiment may be `PASS` while `is_best_so_far=false`.
+
+### 4.1 Implemented Phase 1 loop
+
+The current orchestrator uses a bounded `asyncio.Queue` with up to two proposal
+workers. It assigns a monotonically increasing iteration number before a worker
+claims an item. After every non-terminal result is appended to the Experience
+Bank, it synthesizes a fresh advisory inspiration and replenishes the queue
+until `max_iterations` is reached. A terminal safety or internal failure stops
+the task; it is not retried under unchanged conditions. This prevents the
+earlier single-proposal behavior where a failed first run could consume the
+entire task without exercising the configured iteration budget.
+
+GPU-enabled tasks intentionally use one proposal worker in Phase 1 so two
+candidate processes do not contend for a small shared VRAM pool.
 
 ## 5. Producer-consumer design
 

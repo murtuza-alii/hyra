@@ -46,6 +46,7 @@ class TaskContract(TypedDict):
     wall_timeout_seconds: float
     memory_limit_mb: int
     allow_network: bool
+    gpu: dict[str, object]
 ```
 
 The task evaluator must return:
