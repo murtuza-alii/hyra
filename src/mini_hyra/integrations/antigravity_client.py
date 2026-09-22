@@ -24,7 +24,7 @@ class AgentResponse:
 
 
 class AntigravityClient:
-    """Async wrapper around local agy.exe; no host tools are granted by this client."""
+    """Async wrapper around local agy.exe; polls local brain transcripts for response."""
     def __init__(self, config: AntigravityConfig) -> None:
         self.config = config
 
@@ -38,21 +38,106 @@ class AntigravityClient:
         started = time.monotonic()
         if not self.config.agy_path.is_file():
             return AgentResponse(False, "", conversation_id, role, None, 0, 0, f"agy.exe is unavailable at {self.config.agy_path}")
-        command = [str(self.config.agy_path), "agentapi", "send-message" if conversation_id else "new-conversation"]
+
+        initial_line_count = 0
+        transcript_file: Path | None = None
+
         if conversation_id:
-            command.extend(["--conversation-id", conversation_id])
-        command.extend(["--message", message, "--model", self.config.model])
+            transcript_full = self.config.brain_dir / conversation_id / ".system_generated" / "logs" / "transcript_full.jsonl"
+            transcript_compact = self.config.brain_dir / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"
+            transcript_file = transcript_full if transcript_full.exists() else (transcript_compact if transcript_compact.exists() else transcript_full)
+            if transcript_file.exists():
+                try:
+                    initial_line_count = len(transcript_file.read_text(encoding="utf-8").splitlines())
+                except OSError:
+                    initial_line_count = 0
+
+        if not conversation_id:
+            command = [
+                str(self.config.agy_path), "agentapi", "new-conversation",
+                f"--model={self.config.model}", f"--title=Mini-Hyra [{role}]", message
+            ]
+        else:
+            command = [
+                str(self.config.agy_path), "agentapi", "send-message",
+                conversation_id, message
+            ]
+
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=self.config.cli_timeout_seconds, shell=False)
+            completed = subprocess.run(
+                command, capture_output=True, text=True,
+                timeout=self.config.cli_timeout_seconds, shell=False
+            )
             elapsed = int((time.monotonic() - started) * 1000)
-            if completed.returncode:
-                return AgentResponse(False, completed.stdout[-4000:], conversation_id, role, None, 0, elapsed, completed.stderr[-1000:])
-            payload = json.loads(completed.stdout) if completed.stdout.strip().startswith("{") else {}
-            return AgentResponse(True, str(payload.get("content", completed.stdout)), str(payload.get("conversation_id", conversation_id)) if payload.get("conversation_id", conversation_id) else None, role, payload.get("transcript_path"), int(payload.get("tool_calls_observed", 0)), elapsed, None)
-        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+            if completed.returncode != 0:
+                err = completed.stderr.strip() or completed.stdout.strip()
+                return AgentResponse(False, completed.stdout[-4000:], conversation_id, role, None, 0, elapsed, err)
+
+            try:
+                payload = json.loads(completed.stdout) if completed.stdout.strip().startswith("{") else {}
+            except json.JSONDecodeError:
+                payload = {}
+
+            if not conversation_id:
+                new_id = payload.get("response", {}).get("newConversation", {}).get("conversationId")
+                if not new_id:
+                    new_id = payload.get("conversation_id")
+                if not new_id:
+                    return AgentResponse(False, completed.stdout, None, role, None, 0, elapsed, "Failed to extract conversationId from agy response")
+                conversation_id = str(new_id)
+                initial_line_count = 0
+
+            transcript_full = self.config.brain_dir / conversation_id / ".system_generated" / "logs" / "transcript_full.jsonl"
+            transcript_compact = self.config.brain_dir / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"
+
+            poll_interval = max(0.1, self.config.transcript_poll_ms / 1000.0)
+            tool_calls_observed = 0
+
+            while (time.monotonic() - started) < self.config.cli_timeout_seconds:
+                active_transcript = transcript_full if transcript_full.exists() else (transcript_compact if transcript_compact.exists() else None)
+                if active_transcript and active_transcript.exists():
+                    try:
+                        lines = active_transcript.read_text(encoding="utf-8").splitlines()
+                        for i in range(initial_line_count, len(lines)):
+                            line = lines[i].strip()
+                            if not line:
+                                continue
+                            try:
+                                step = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+
+                            if step.get("tool_calls"):
+                                tool_calls_observed += len(step["tool_calls"])
+
+                            if (
+                                step.get("source") == "MODEL"
+                                and step.get("type") == "PLANNER_RESPONSE"
+                                and step.get("status") == "DONE"
+                                and not step.get("tool_calls")
+                            ):
+                                content = step.get("content", "")
+                                elapsed = int((time.monotonic() - started) * 1000)
+                                return AgentResponse(
+                                    True, content, conversation_id, role,
+                                    str(active_transcript), tool_calls_observed, elapsed, None
+                                )
+                    except OSError:
+                        pass
+
+                time.sleep(poll_interval)
+
+            elapsed = int((time.monotonic() - started) * 1000)
+            return AgentResponse(
+                False, "", conversation_id, role,
+                str(transcript_full) if transcript_full.exists() else None,
+                tool_calls_observed, elapsed, "Execution timeout exceeded waiting for agent response"
+            )
+
+        except (OSError, subprocess.TimeoutExpired) as error:
             elapsed = int((time.monotonic() - started) * 1000)
             return AgentResponse(False, "", conversation_id, role, None, 0, elapsed, str(error))
 
     async def reset_session(self, conversation_id: str) -> None:
-        if self.config.agy_path.is_file():
-            await asyncio.to_thread(subprocess.run, [str(self.config.agy_path), "agentapi", "reset-session", "--conversation-id", conversation_id], capture_output=True, check=False, shell=False)
+        pass
+

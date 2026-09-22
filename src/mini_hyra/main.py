@@ -41,7 +41,14 @@ def _parser() -> argparse.ArgumentParser:
     best.add_argument("evaluator_version")
     best.add_argument("--direction", choices=("minimize", "maximize"), required=True)
     best.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    run_cmd = commands.add_parser("run", help="run autonomous search/optimization loop on a task contract")
+    run_cmd.add_argument("contract", type=Path, help="path to task JSON contract")
+    run_cmd.add_argument("--agent", choices=("antigravity", "template"), default="antigravity", help="proposal agent engine (default: antigravity)")
+    run_cmd.add_argument("--iterations", type=int, help="override maximum iterations")
+    run_cmd.add_argument("--non-strict", action="store_true", help="run in non-strict local sandbox mode without hardened launcher")
+    run_cmd.add_argument("--json", action="store_true", help="emit machine-readable JSON output")
     return parser
+
 
 
 def _emit(value: Any, *, as_json: bool = False) -> None:
@@ -134,6 +141,74 @@ def main(argv: Sequence[str] | None = None) -> int:
             package = _package_from_directory(args.package)
             print(json.dumps({"solution_version": solution_hash(package), "entrypoint": package.entrypoint, "files": [item.__dict__ for item in package.manifest]}, indent=2))
             return 0
+        if args.command == "run":
+            paths.ensure()
+            import asyncio
+            import dataclasses
+            from .context_agent import ContextAgent
+            from .integrations.antigravity_client import AntigravityClient
+            from .orchestrator import Orchestrator
+            from .proposal_agent import AntigravityProposalAgent, TemplateProposalAgent
+            from .models import ObjectiveResult
+
+            task = load_task_contract(args.contract)
+            if args.iterations:
+                if args.iterations < 1:
+                    raise PackageValidationError("--iterations must be at least 1")
+                task = dataclasses.replace(task, max_iterations=args.iterations)
+
+            bank = ExperienceBank(paths.state / "experience_bank.json")
+            context_agent = ContextAgent(bank)
+
+            if args.agent == "antigravity":
+                ag_config = AntigravityConfig.from_environment(paths)
+                ag_client = AntigravityClient(ag_config)
+                proposal_agent = AntigravityProposalAgent(client=ag_client)
+            else:
+                proposal_agent = TemplateProposalAgent()
+
+            def _heuristic_evaluator(sandbox, task_contract):
+                import re
+                for line in reversed(sandbox.stdout.splitlines()):
+                    line = line.strip()
+                    if line.startswith("{") and line.endswith("}"):
+                        try:
+                            data = json.loads(line)
+                            if task_contract.objective.name in data:
+                                return ObjectiveResult(True, float(data[task_contract.objective.name]), task_contract.objective.name, task_contract.objective.direction, data)
+                            if "score" in data:
+                                return ObjectiveResult(True, float(data["score"]), task_contract.objective.name, task_contract.objective.direction, data)
+                        except Exception:
+                            pass
+                match = re.search(r"(?:score|metric|" + re.escape(task_contract.objective.name) + r")\s*[:=]\s*([0-9.]+)", sandbox.stdout, re.IGNORECASE)
+                if match:
+                    return ObjectiveResult(True, float(match.group(1)), task_contract.objective.name, task_contract.objective.direction, {})
+                if sandbox.exit_code == 0:
+                    score = float(sandbox.execution_time_ms) if "time" in task_contract.objective.name.lower() or "latency" in task_contract.objective.name.lower() else 1.0
+                    return ObjectiveResult(True, score, task_contract.objective.name, task_contract.objective.direction, {})
+                return ObjectiveResult(False, None, task_contract.objective.name, task_contract.objective.direction, {})
+
+            orchestrator = Orchestrator(
+                paths=paths,
+                context_agent=context_agent,
+                proposal_agent=proposal_agent,
+                evaluator=_heuristic_evaluator,
+                experience_bank=bank,
+            )
+
+            print(f"Starting Mini-Hyra loop for '{task.task_id}' ({task.max_iterations} iterations, agent: {args.agent})...")
+            result = asyncio.run(orchestrator.run(task, strict_isolation=not args.non_strict))
+
+            if result is None:
+                print("Optimization run ended with no valid solution.")
+                return 1
+            if args.json:
+                print(json.dumps(result.to_dict(), indent=2))
+            else:
+                metric = result.objective_metrics[0] if result.objective_metrics else {"name": "score", "value": "—"}
+                print(f"Best solution: run_id={result.run_id} · {metric['name']}={metric['value']} · time={result.execution_time_ms}ms")
+            return 0
+
         bank = ExperienceBank(paths.state / "experience_bank.json")
         records = bank.records()
         if args.command == "history":

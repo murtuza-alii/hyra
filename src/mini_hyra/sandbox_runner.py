@@ -42,16 +42,31 @@ def _hardened_launcher() -> str | None:
     return str(candidate) if candidate.is_file() else None
 
 
+def _find_bash_launcher() -> str | None:
+    if os.name != "nt":
+        return shutil.which("bash") or shutil.which("sh") or "/bin/sh"
+    candidates = [
+        os.environ.get("MINI_HYRA_BASH"),
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\bin\sh.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe"),
+        shutil.which("sh"),
+        shutil.which("bash"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return None
+
+
 def _command(entrypoint: Sequence[str], *, hardened_launcher: str | None) -> list[str]:
     if tuple(entrypoint) != ("./solution/solve.sh",):
         raise PackageValidationError("only the canonical ./solution/solve.sh entrypoint is allowed")
-    if os.name == "nt":
-        launcher = shutil.which("bash")
-        if launcher is None:
-            raise PackageValidationError("no allow-listed Bash/WSL adapter is available on Windows")
-        command = [launcher, *entrypoint]
-    else:
-        command = ["/bin/sh", *entrypoint]
+    launcher = _find_bash_launcher()
+    if launcher is None:
+        raise PackageValidationError("no allow-listed Bash/WSL adapter is available on Windows")
+    command = [launcher, *entrypoint]
     # Hardened launchers implement: launcher -- <command> [args...].
     return [hardened_launcher, "--", *command] if hardened_launcher else command
 
@@ -125,7 +140,7 @@ def run_in_sandbox(
                 raise PackageValidationError("validated package escaped the sandbox")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
-        environment = {"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1", "TEMP": str(sandbox / "tmp"), "TMP": str(sandbox / "tmp"), "PATH": os.defpath,
+        environment = {"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1", "TEMP": str(sandbox / "tmp"), "TMP": str(sandbox / "tmp"), "PATH": os.environ.get("PATH", os.defpath),
                        "MINI_HYRA_GPU_POLICY": json.dumps({"enabled": policy.enabled, "device_index": policy.device_index, "memory_limit_mb": policy.memory_limit_mb, "require_cuda": policy.require_cuda})}
         if policy.enabled:
             environment["CUDA_VISIBLE_DEVICES"] = str(policy.device_index)
