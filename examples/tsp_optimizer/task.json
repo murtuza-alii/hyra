@@ -1,0 +1,29 @@
+{
+  "task_id": "tsp-route-optimization",
+  "task_family": "combinatorial-optimization",
+  "description": "Optimize a Traveling Salesperson route over 25 cities to minimize total tour distance.",
+  "solution_entrypoint": "solution/solve.sh",
+  "evaluator_version": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "objective": {
+    "name": "total_distance",
+    "direction": "minimize",
+    "target": 350.0,
+    "minimum_improvement": 1.0
+  },
+  "validity_checks": [
+    "exit-zero",
+    "valid-tour",
+    "all-cities-visited"
+  ],
+  "max_iterations": 3,
+  "wall_timeout_seconds": 10.0,
+  "memory_limit_mb": 256,
+  "allow_network": false,
+  "gpu": {
+    "enabled": false,
+    "device_index": 0,
+    "min_memory_mb": 0,
+    "memory_limit_mb": null,
+    "require_cuda": false
+  }
+}
